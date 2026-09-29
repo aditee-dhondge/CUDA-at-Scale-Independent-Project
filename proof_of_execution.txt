@@ -1,0 +1,30 @@
+CUDA at Scale Independent Project - Execution Proof
+
+Environment:
+GPU: NVIDIA L4
+CUDA capability: 8.9
+
+Execution output:
+Generating 200 deterministic grayscale test images...
+Generated 200 images of 256x256 pixels.
+Building CUDA program...
+nvcc -O2 src/batch_image_blur.cu -o bin/cuda_batch_image_blur
+Running GPU batch image processing...
+CUDA GPU: NVIDIA L4
+CUDA capability: 8.9
+Images found: 200
+Processed 20/200 images
+Processed 40/200 images
+Processed 60/200 images
+Processed 80/200 images
+Processed 100/200 images
+Processed 120/200 images
+Processed 140/200 images
+Processed 160/200 images
+Processed 180/200 images
+Processed 200/200 images
+GPU kernel time (sum): 2.15501 ms
+Total pixels processed: 13107200
+Batch processing completed successfully.
+Output images: 200
+GPU batch image processing completed successfully for all 200 images.
