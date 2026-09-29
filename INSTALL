@@ -1,0 +1,17 @@
+# Installation
+
+## CUDA Linux Laboratory
+
+This project requires a CUDA-capable NVIDIA GPU and the CUDA toolkit with nvcc.
+
+Check the environment with:
+
+    nvcc --version
+    nvidia-smi
+
+Build and run:
+
+    chmod +x run.sh
+    ./run.sh
+
+The script generates 200 test images, compiles the CUDA kernel, executes the GPU batch processing, and writes the 200 processed images to data/output/.
