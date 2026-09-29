@@ -1,20 +1,22 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <algorithm>
+#include <dirent.h>
 #include <fstream>
 #include <iostream>
 #include <string>
-#include <vector>
-#include <algorithm>
-#include <dirent.h>
 #include <sys/stat.h>
-#include <chrono>
+#include <vector>
 
-#define CUDA_CHECK(call) do {     cudaError_t err = (call);     if (err != cudaSuccess) {         std::cerr << "CUDA error: " << cudaGetErrorString(err)                   << " at " << __FILE__ << ":" << __LINE__ << std::endl;         return 1;     } } while (0)
+#define CUDA_CHECK(call) do { \
+    const cudaError_t error = (call); \
+    if (error != cudaSuccess) { \
+        std::cerr << "CUDA error: " << cudaGetErrorString(error) \
+                  << " at " << __FILE__ << ":" << __LINE__ << std::endl; \
+        return 1; \
+    } \
+} while (0)
 
 struct Image {
     int width = 0;
@@ -22,87 +24,98 @@ struct Image {
     std::vector<unsigned char> pixels;
 };
 
-static bool readPGM(const std::string& path, Image& img) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return false;
+static bool ReadPgm(const std::string& path, Image& image) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) return false;
 
     std::string magic;
-    in >> magic;
+    input >> magic;
     if (magic != "P5") return false;
 
-    auto skipComments = [&]() {
-        while (in.peek() == '#') {
+    auto SkipComments = [&input]() {
+        input >> std::ws;
+        while (input.peek() == '#') {
             std::string line;
-            std::getline(in, line);
+            std::getline(input, line);
+            input >> std::ws;
         }
     };
 
-    skipComments();
-    in >> img.width;
-    skipComments();
-    in >> img.height;
-    skipComments();
+    SkipComments();
+    input >> image.width;
+    SkipComments();
+    input >> image.height;
+    SkipComments();
 
-    int maxValue;
-    in >> maxValue;
-    in.get();
+    int max_value = 0;
+    input >> max_value;
+    input.get();
 
-    if (img.width <= 0 || img.height <= 0 || maxValue != 255) return false;
+    if (image.width <= 0 || image.height <= 0 || max_value != 255) {
+        return false;
+    }
 
-    img.pixels.resize(static_cast<size_t>(img.width) * img.height);
-    in.read(reinterpret_cast<char*>(img.pixels.data()), img.pixels.size());
-    return in.good();
+    const size_t pixel_count =
+        static_cast<size_t>(image.width) * image.height;
+    image.pixels.resize(pixel_count);
+    input.read(reinterpret_cast<char*>(image.pixels.data()), pixel_count);
+
+    return input.good();
 }
 
-static bool writePGM(const std::string& path, const Image& img) {
-    std::ofstream out(path, std::ios::binary);
-    if (!out) return false;
+static bool WritePgm(const std::string& path, const Image& image) {
+    std::ofstream output(path, std::ios::binary);
+    if (!output) return false;
 
-    out << "P5\n" << img.width << " " << img.height << "\n255\n";
-    out.write(reinterpret_cast<const char*>(img.pixels.data()), img.pixels.size());
-    return out.good();
+    output << "P5\n" << image.width << " " << image.height << "\n255\n";
+    output.write(reinterpret_cast<const char*>(image.pixels.data()),
+                 image.pixels.size());
+    return output.good();
 }
 
-__global__ void boxBlurKernel(const unsigned char* input,
+__global__ void BoxBlurKernel(const unsigned char* input,
                               unsigned char* output,
                               int width,
                               int height) {
-    int x = blockIdx.x * blockDim.x + threadIdx.x;
-    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const int y = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x >= width || y >= height) return;
 
     int sum = 0;
     int count = 0;
 
-    for (int dy = -1; dy <= 1; ++dy) {
-        for (int dx = -1; dx <= 1; ++dx) {
-            int nx = x + dx;
-            int ny = y + dy;
+    for (int delta_y = -1; delta_y <= 1; ++delta_y) {
+        for (int delta_x = -1; delta_x <= 1; ++delta_x) {
+            const int neighbor_x = x + delta_x;
+            const int neighbor_y = y + delta_y;
 
-            if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-                sum += input[ny * width + nx];
+            if (neighbor_x >= 0 && neighbor_x < width &&
+                neighbor_y >= 0 && neighbor_y < height) {
+                sum += input[neighbor_y * width + neighbor_x];
                 ++count;
             }
         }
     }
 
-    output[y * width + x] = static_cast<unsigned char>(sum / count);
+    output[y * width + x] =
+        static_cast<unsigned char>(sum / count);
 }
 
-static std::vector<std::string> listPGMFiles(const std::string& dir) {
+static std::vector<std::string> ListPgmFiles(const std::string& directory) {
     std::vector<std::string> files;
-    DIR* dp = opendir(dir.c_str());
-    if (!dp) return files;
+    DIR* directory_handle = opendir(directory.c_str());
+    if (directory_handle == nullptr) return files;
 
-    while (dirent* entry = readdir(dp)) {
-        std::string name = entry->d_name;
-        if (name.size() >= 4 && name.substr(name.size() - 4) == ".pgm") {
-            files.push_back(dir + "/" + name);
+    while (dirent* entry = readdir(directory_handle)) {
+        const std::string name = entry->d_name;
+        if (name.size() >= 4 &&
+            name.compare(name.size() - 4, 4, ".pgm") == 0) {
+            files.push_back(directory + "/" + name);
         }
     }
-    closedir(dp);
 
+    closedir(directory_handle);
     std::sort(files.begin(), files.end());
     return files;
 }
@@ -114,37 +127,41 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    const std::string inputDir = argv[1];
-    const std::string outputDir = argv[2];
+    const std::string input_directory = argv[1];
+    const std::string output_directory = argv[2];
+    mkdir(output_directory.c_str(), 0755);
 
-    mkdir(outputDir.c_str(), 0755);
+    cudaDeviceProp device_properties{};
+    CUDA_CHECK(cudaGetDeviceProperties(&device_properties, 0));
 
-    cudaDeviceProp prop{};
-    CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+    std::cout << "CUDA GPU: " << device_properties.name << "\n";
+    std::cout << "CUDA capability: " << device_properties.major << "."
+              << device_properties.minor << "\n";
 
-    std::cout << "CUDA GPU: " << prop.name << "\n";
-    std::cout << "CUDA capability: " << prop.major << "." << prop.minor << "\n";
-
-    std::vector<std::string> files = listPGMFiles(inputDir);
+    const std::vector<std::string> files = ListPgmFiles(input_directory);
     if (files.empty()) {
-        std::cerr << "No PGM images found in " << inputDir << "\n";
+        std::cerr << "No PGM images found in " << input_directory << "\n";
         return 1;
     }
 
     std::cout << "Images found: " << files.size() << "\n";
 
-    cudaEvent_t start, stop;
-    CUDA_CHECK(cudaEventCreate(&start));
-    CUDA_CHECK(cudaEventCreate(&stop));
+    cudaEvent_t start_event;
+    cudaEvent_t stop_event;
+    CUDA_CHECK(cudaEventCreate(&start_event));
+    CUDA_CHECK(cudaEventCreate(&stop_event));
 
-    size_t totalPixels = 0;
-    float totalGpuMs = 0.0f;
+    size_t total_pixels = 0;
+    size_t processed_images = 0;
+    float total_gpu_ms = 0.0f;
 
-    for (size_t i = 0; i < files.size(); ++i) {
+    for (size_t index = 0; index < files.size(); ++index) {
         Image input;
-        if (!readPGM(files[i], input)) {
-            std::cerr << "Skipping unreadable image: " << files[i] << "\n";
-            continue;
+        if (!ReadPgm(files[index], input)) {
+            std::cerr << "ERROR: Unable to read " << files[index] << "\n";
+            cudaEventDestroy(start_event);
+            cudaEventDestroy(stop_event);
+            return 1;
         }
 
         Image output;
@@ -152,51 +169,65 @@ int main(int argc, char** argv) {
         output.height = input.height;
         output.pixels.resize(input.pixels.size());
 
-        unsigned char* d_input = nullptr;
-        unsigned char* d_output = nullptr;
-        size_t bytes = input.pixels.size();
+        unsigned char* device_input = nullptr;
+        unsigned char* device_output = nullptr;
+        const size_t bytes = input.pixels.size();
 
-        CUDA_CHECK(cudaMalloc(&d_input, bytes));
-        CUDA_CHECK(cudaMalloc(&d_output, bytes));
-        CUDA_CHECK(cudaMemcpy(d_input, input.pixels.data(), bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMalloc(&device_input, bytes));
+        CUDA_CHECK(cudaMalloc(&device_output, bytes));
+        CUDA_CHECK(cudaMemcpy(device_input, input.pixels.data(), bytes,
+                              cudaMemcpyHostToDevice));
 
-        dim3 block(16, 16);
-        dim3 grid((input.width + block.x - 1) / block.x,
-                  (input.height + block.y - 1) / block.y);
+        const dim3 block(16, 16);
+        const dim3 grid((input.width + block.x - 1) / block.x,
+                        (input.height + block.y - 1) / block.y);
 
-        CUDA_CHECK(cudaEventRecord(start));
-        boxBlurKernel<<<grid, block>>>(d_input, d_output, input.width, input.height);
+        CUDA_CHECK(cudaEventRecord(start_event));
+        BoxBlurKernel<<<grid, block>>>(device_input, device_output,
+                                       input.width, input.height);
         CUDA_CHECK(cudaGetLastError());
-        CUDA_CHECK(cudaEventRecord(stop));
-        CUDA_CHECK(cudaEventSynchronize(stop));
+        CUDA_CHECK(cudaEventRecord(stop_event));
+        CUDA_CHECK(cudaEventSynchronize(stop_event));
 
-        float gpuMs = 0.0f;
-        CUDA_CHECK(cudaEventElapsedTime(&gpuMs, start, stop));
-        totalGpuMs += gpuMs;
+        float gpu_ms = 0.0f;
+        CUDA_CHECK(cudaEventElapsedTime(&gpu_ms, start_event, stop_event));
+        total_gpu_ms += gpu_ms;
 
-        CUDA_CHECK(cudaMemcpy(output.pixels.data(), d_output, bytes, cudaMemcpyDeviceToHost));
+        CUDA_CHECK(cudaMemcpy(output.pixels.data(), device_output, bytes,
+                              cudaMemcpyDeviceToHost));
 
-        std::string filename = files[i].substr(files[i].find_last_of('/') + 1);
-        std::string outPath = outputDir + "/blurred_" + filename;
-        if (!writePGM(outPath, output)) {
-            std::cerr << "Failed to write " << outPath << "\n";
+        const size_t slash = files[index].find_last_of('/');
+        const std::string filename = files[index].substr(slash + 1);
+        const std::string output_path =
+            output_directory + "/blurred_" + filename;
+
+        if (!WritePgm(output_path, output)) {
+            std::cerr << "ERROR: Failed to write " << output_path << "\n";
+            cudaFree(device_input);
+            cudaFree(device_output);
+            cudaEventDestroy(start_event);
+            cudaEventDestroy(stop_event);
+            return 1;
         }
 
-        totalPixels += bytes;
-        cudaFree(d_input);
-        cudaFree(d_output);
+        total_pixels += input.pixels.size();
+        ++processed_images;
 
-        if ((i + 1) % 20 == 0 || i + 1 == files.size()) {
-            std::cout << "Processed " << (i + 1) << "/" << files.size()
-                      << " images\n";
+        cudaFree(device_input);
+        cudaFree(device_output);
+
+        if (processed_images % 20 == 0 ||
+            processed_images == files.size()) {
+            std::cout << "Processed " << processed_images << "/"
+                      << files.size() << " images\n";
         }
     }
 
-    CUDA_CHECK(cudaEventDestroy(start));
-    CUDA_CHECK(cudaEventDestroy(stop));
+    CUDA_CHECK(cudaEventDestroy(start_event));
+    CUDA_CHECK(cudaEventDestroy(stop_event));
 
-    std::cout << "GPU kernel time (sum): " << totalGpuMs << " ms\n";
-    std::cout << "Total pixels processed: " << totalPixels << "\n";
+    std::cout << "GPU kernel time (sum): " << total_gpu_ms << " ms\n";
+    std::cout << "Total pixels processed: " << total_pixels << "\n";
     std::cout << "Batch processing completed successfully.\n";
 
     return 0;
