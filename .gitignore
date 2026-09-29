@@ -1,0 +1,3 @@
+bin/cuda_batch_image_blur
+data/input/*.pgm
+data/output/*.pgm
