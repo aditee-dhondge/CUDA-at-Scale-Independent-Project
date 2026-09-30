@@ -1,55 +1,45 @@
 # Project Description
 
-## Problem
+## Purpose
 
-Image filtering is a highly parallel workload because each output pixel can be calculated independently from neighboring input pixels. This project implements a grayscale 3x3 box blur as a CUDA kernel and applies it to a batch of 200 images.
+This project demonstrates GPU-accelerated image processing using NVIDIA CUDA. The workload is a 3x3 grayscale box blur applied to a reproducible batch of 200 images. The goal is to show how a repetitive, data-parallel operation can be mapped onto CUDA threads and measured as part of a complete application.
 
-## Approach
+## Algorithm
 
-1. Generate deterministic 256x256 grayscale PGM images.
-2. Read each image on the CPU.
-3. Allocate GPU memory and copy the image from host to device.
-4. Launch a CUDA grid using 16x16 threads per block.
-5. Assign one CUDA thread to each output pixel.
-6. Average the valid pixels in the 3x3 neighborhood.
-7. Copy the result from device to host.
-8. Write the blurred image as a PGM file.
+Each output pixel is assigned to one CUDA thread. The thread computes its two-dimensional coordinate from CUDA block and thread indices, examines the surrounding 3x3 neighborhood, ignores neighbors outside the image boundary, averages the valid grayscale values, and writes the result.
 
-## CUDA Mapping
+The program uses 16x16 CUDA thread blocks, giving 256 threads per block and a natural mapping for two-dimensional image data.
 
-For each output pixel, the kernel calculates its x and y coordinates from block and thread indices. The thread then visits offsets from -1 through +1 in both dimensions. Boundary checks prevent invalid memory accesses.
+## Memory and Execution
 
-## GPU Concepts Demonstrated
+The input image is loaded into host memory. Device memory is allocated with cudaMalloc and the image is copied from host to device with cudaMemcpy. BoxBlurKernel processes the image in parallel. The result is copied back to host memory and written as a PGM file.
 
-- Parallel execution with CUDA threads
-- Two-dimensional grids and blocks
-- cudaMalloc and cudaMemcpy
-- Device global memory
-- Host/device data transfers
-- CUDA event timing
-- Batch GPU processing
+CUDA events are used around each kernel launch. The application accumulates kernel execution time over the batch. This is deliberately treated separately from file I/O and other CPU-side overhead so that GPU measurement is not confused with end-to-end latency.
+
+## Batch and Validation
+
+The demonstration uses 200 deterministic 256x256 grayscale images. The complete batch contains 13,107,200 pixels. The run script creates the inputs, builds the CUDA executable, runs GPU processing, checks that 200 output files were generated, and validates their PGM format and dimensions.
+
+This makes the experiment reproducible and provides evidence that the application operates on a batch rather than only one sample.
 
 ## Results
 
-The documented laboratory execution used an NVIDIA L4 GPU with compute capability 8.9. It processed 200 images of 256x256 pixels, for 13,107,200 total pixels, and produced 200 output images. The recorded summed GPU kernel time was 2.15501 ms.
+The documented execution used an NVIDIA L4 GPU with compute capability 8.9. It processed all 200 images and generated 200 output images. The recorded summed GPU kernel time was 2.15501 ms.
+
+The timing is the accumulated CUDA kernel time for the batch; it is not total application runtime because CPU file I/O, allocation, and transfer overhead are outside the measured kernel interval.
 
 ## Challenges
 
-- Correctly mapping two-dimensional image coordinates to CUDA threads.
-- Handling image boundaries without out-of-bounds memory accesses.
-- Managing GPU allocations and memory transfers.
-- Separating kernel timing from CPU-side file I/O.
-- Creating a reproducible workflow for an entire image batch.
+The main implementation challenges were mapping two-dimensional image coordinates to CUDA threads, handling boundary pixels safely, managing device memory and transfers, and designing a repeatable batch workflow.
+
+Another challenge was interpreting performance correctly. A GPU kernel can be very fast while the overall program is still affected by disk I/O and memory transfers. Separating these components makes the performance result more meaningful.
 
 ## Lessons Learned
 
-The project demonstrates that GPU acceleration is most useful when a workload contains many independent operations. It also shows that kernel execution time is only one part of an application: file I/O, memory allocation, and host-device transfers also affect end-to-end performance.
+The project showed how CUDA's grid and block model maps naturally to image data. It also reinforced that GPU performance depends on the complete data path: host memory, device memory, transfers, kernel execution, and output processing.
 
-## Future Improvements
+The project demonstrated the value of reproducibility. Generating deterministic input data and validating every output makes it easier for another reviewer to repeat the experiment and verify that the application behaved as intended.
 
-- Use CUDA streams to overlap data transfers and computation.
-- Use shared-memory tiling to reuse neighboring pixels.
-- Keep data resident on the GPU across multiple image-processing stages.
-- Compare against a CPU implementation.
-- Add Gaussian blur and Sobel edge detection.
-- Support color images and larger image formats.
+## Future Work
+
+The next improvements would be to keep data resident on the GPU across multiple image-processing stages, use shared-memory tiling to reduce repeated global-memory reads, overlap transfers and computation with CUDA streams, and add a CPU reference implementation for a direct end-to-end comparison. Additional filters such as Gaussian blur and Sobel edge detection could then be added as further GPU kernels.
