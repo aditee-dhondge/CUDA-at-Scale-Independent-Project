@@ -11,23 +11,22 @@ echo "Generating ${EXPECTED_IMAGES} deterministic grayscale test images..."
 python3 - <<'PY'
 from pathlib import Path
 
-output = Path("data/input")
+output = Path('data/input')
 output.mkdir(parents=True, exist_ok=True)
-
 width = height = 256
 count = 200
 
 for index in range(count):
-    path = output / f"image_{index:03d}.pgm"
-    with path.open("wb") as handle:
-        handle.write(f"P5\n{width} {height}\n255\n".encode())
+    path = output / f'image_{index:03d}.pgm'
+    with path.open('wb') as handle:
+        handle.write(f'P5\n{width} {height}\n255\n'.encode())
         pixels = bytearray(width * height)
         for y in range(height):
             for x in range(width):
                 pixels[y * width + x] = (x + y + index * 7 + ((x * y) % 31)) % 256
         handle.write(pixels)
 
-print(f"Generated {count} images of {width}x{height} pixels.")
+print(f'Generated {count} images of {width}x{height} pixels.')
 PY
 
 echo "Building CUDA program..."
@@ -45,5 +44,8 @@ if [ "$output_count" -ne "$EXPECTED_IMAGES" ]; then
     echo "ERROR: Expected ${EXPECTED_IMAGES} output images, but found ${output_count}."
     exit 1
 fi
+
+echo "Verifying output image files..."
+python3 verify_outputs.py "$OUTPUT_DIR"
 
 echo "GPU batch image processing completed successfully for all ${EXPECTED_IMAGES} images."
